@@ -526,8 +526,8 @@ function enableSchemeChangeDetection() {
                             current_theme.properties.color_scheme = "system"; // Change the property of the theme object
                             current_theme.properties.content_color_scheme = "system"; // Optional
 
-                            return prepareThemeForUpdate(current_theme)
-                                .then((portable_theme) => browser.theme.update(portable_theme))
+                            return sanitizeThemeForUpdate(current_theme)
+                                .then((sanitized_theme) => browser.theme.update(sanitized_theme))
                                 .then(() => {
                                     logDebug("enableSchemeChangeDetection - Updated current theme.");
                                 });

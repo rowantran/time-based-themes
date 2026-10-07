@@ -13,7 +13,7 @@ function onError(error) {
 // getCurrent() returns absolute moz-extension: image URLs that update()
 // rejects. Embed PNG/JPEG images as data URLs when reapplying the theme
 // with a system color scheme (Firefox bug 1618563).
-async function prepareThemeForUpdate(theme) {
+async function sanitizeThemeForUpdate(theme) {
     if (!theme.images) return theme;
 
     async function convertImage(image) {
