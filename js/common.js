@@ -518,10 +518,6 @@ function enableSchemeChangeDetection() {
                         if (current_theme.colors) { // "System theme — auto" is an empty object
                             logDebug("enableSchemeChangeDetection - Mode is set to 'system-theme'. Set color_scheme to system.");
 
-                            // Image reads/decodes can take time. Do not overwrite a
-                            // different theme that was selected while they were running.
-                            const theme_before_copy = JSON.stringify(current_theme);
-
                             // Some themes are returned without a 'properties' object.
                             // Guard against that so we don't throw and leave the
                             // scheme-change block stuck on (silently disabling detection).
@@ -531,16 +527,10 @@ function enableSchemeChangeDetection() {
                             current_theme.properties.content_color_scheme = "system"; // Optional
 
                             return prepareThemeForUpdate(current_theme)
-                                .then((portable_theme) => browser.theme.getCurrent()
-                                    .then((latest_theme) => {
-                                        if (JSON.stringify(latest_theme) !== theme_before_copy) {
-                                            logDebug("enableSchemeChangeDetection - Theme changed while copying images; skip stale update.");
-                                            return;
-                                        }
-                                        return browser.theme.update(portable_theme).then(() => {
-                                            logDebug("enableSchemeChangeDetection - Updated current theme.");
-                                        });
-                                    }));
+                                .then((portable_theme) => browser.theme.update(portable_theme))
+                                .then(() => {
+                                    logDebug("enableSchemeChangeDetection - Updated current theme.");
+                                });
                         }
                     })
                     // Un-block scheme change detection whether or not the update applied.

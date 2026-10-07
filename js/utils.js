@@ -10,106 +10,35 @@ function onError(error) {
     console.log("automaticDark Error: " + error);
 }
 
-function isThemeImageDataUrl(image) {
-    return image.startsWith("data:image/png;base64,")
-        || image.startsWith("data:image/jpeg;base64,");
-}
-
-async function themeImageBlobToDataUrl(blob) {
-    const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(reader.error);
-        reader.onabort = () => reject(new Error("Theme image read was aborted."));
-        reader.readAsDataURL(blob);
-    });
-    if (isThemeImageDataUrl(dataUrl)) {
-        return dataUrl;
-    }
-
-    // Firefox only accepts PNG/JPEG data URLs, even though static themes can
-    // include SVG/GIF images. Rasterize other formats instead of sending another
-    // invalid URL. PNG/JPEG bytes (including animated PNGs) stay unchanged above;
-    // this fallback necessarily uses one frame for other animated formats.
-    const image = new Image();
-    image.src = dataUrl;
-    await image.decode();
-    let width = image.naturalWidth;
-    let height = image.naturalHeight;
-    if ((!width || !height) && blob.type === "image/svg+xml") {
-        // ViewBox-only SVGs can have no intrinsic size. Give them a viewport
-        // with the usual theme-header height while preserving their aspect ratio.
-        const svg = new DOMParser().parseFromString(await blob.text(), "image/svg+xml").documentElement;
-        const viewBox = (svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
-        const ratio = viewBox.length === 4 && viewBox.every(Number.isFinite)
-            && viewBox[2] > 0 && viewBox[3] > 0
-            ? viewBox[2] / viewBox[3] : 1.5;
-        height = height || (width ? width / ratio : 200);
-        width = width || height * ratio;
-        image.width = Math.max(1, Math.round(width));
-        image.height = Math.max(1, Math.round(height));
-    }
-    if (!width || !height) {
-        throw new Error("Theme image has no drawable dimensions.");
-    }
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(width));
-    canvas.height = Math.max(1, Math.round(height));
-    canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/png");
-}
-
-// theme.getCurrent() returns absolute moz-extension: image URLs, but
-// theme.update() only accepts packaged relative URLs, image data URLs, or
-// gradient objects. Copy images from the enabled theme into data URLs so
-// reapplying its colors/properties does not discard its artwork or fail
-// validation (Firefox bug 1618563). No additional host permissions are needed
-// to read static theme images.
+// getCurrent() returns absolute moz-extension: image URLs that update()
+// rejects. Embed PNG/JPEG images as data URLs when reapplying the theme
+// with a system color scheme (Firefox bug 1618563).
 async function prepareThemeForUpdate(theme) {
-    if (!theme.images) {
-        return theme;
+    if (!theme.images) return theme;
+
+    async function convertImage(image) {
+        if (typeof image !== "string" || !image.startsWith("moz-extension://")) return image;
+        const response = await fetch(image);
+        if (!response.ok) throw new Error("Could not read theme image: " + response.status);
+        const blob = await response.blob();
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(reader.error);
+            reader.onabort = () => reject(new Error("Theme image read was aborted."));
+            reader.readAsDataURL(blob);
+        });
     }
 
-    // A theme can use the same image in more than one background layer.
-    // Share its conversion within this update, but do not cache failed reads
-    // or retain large image data URLs for the rest of the browser session.
-    const conversions = new Map();
-    function convertImage(image) {
-        // Keep accepted data URLs, packaged relative paths, and gradients intact.
-        const needsConversion = typeof image === "string"
-            && (image.startsWith("moz-extension://")
-                || (image.startsWith("data:image/") && !isThemeImageDataUrl(image)));
-        if (!needsConversion) {
-            return Promise.resolve(image);
-        }
-        if (!conversions.has(image)) {
-            conversions.set(image, fetch(image)
-                .then((response) => {
-                    if (!response.ok) {
-                        throw new Error("Could not read theme image: " + response.status);
-                    }
-                    return response.blob();
-                })
-                .then(themeImageBlobToDataUrl));
-        }
-        return conversions.get(image);
-    }
-
-    // Firefox validates ignored legacy/experiment image keys too. This
-    // extension has no theme experiment and only these two keys are painted.
+    // Ignore legacy/experiment image fields: they are not painted, but their
+    // absolute URLs would still fail update() validation.
     const images = {};
     if (theme.images.theme_frame !== undefined) {
-        images.theme_frame = theme.images.theme_frame;
+        images.theme_frame = await convertImage(theme.images.theme_frame);
     }
-    if (theme.images.additional_backgrounds !== undefined) {
-        images.additional_backgrounds = theme.images.additional_backgrounds;
-    }
-    if (images.theme_frame !== undefined) {
-        images.theme_frame = await convertImage(images.theme_frame);
-    }
-    if (images.additional_backgrounds) {
+    if (theme.images.additional_backgrounds) {
         images.additional_backgrounds = await Promise.all(
-            images.additional_backgrounds.map(convertImage));
+            theme.images.additional_backgrounds.map(convertImage));
     }
     return {...theme, images};
 }
